@@ -531,39 +531,6 @@
       width: 100%;
     }
 
-    /* Color Temperature Buttons */
-    .color-temp-btn {
-      padding: 15px 10px;
-      background: white;
-      border: 2px solid var(--border);
-      border-radius: 2px;
-      cursor: pointer;
-      font-family: 'Noto Sans', sans-serif;
-      transition: all 0.3s ease;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-
-    .color-temp-btn:hover {
-      border-color: var(--dark);
-      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-    }
-
-    .color-temp-btn.active {
-      border-color: var(--dark);
-      background: var(--light);
-      box-shadow: 0 3px 8px rgba(0,0,0,0.15);
-    }
-
-    .temp-icon {
-      transition: transform 0.3s ease;
-    }
-
-    .color-temp-btn.active .temp-icon {
-      transform: scale(1.1);
-    }
-
     /* Actions */
     .step-actions {
       display: flex;
@@ -737,7 +704,7 @@
           <!-- Spring Color -->
           <div class="color-set" onclick="selectColorSet('spring')">
             <div class="color-set-logo">Spring Color</div>
-            <div class="color-set-tag">溫暖生動系</div>
+            <div class="color-set-tag">精油強身 ∣ 純素主義</div>
             <div class="color-set-desc">義大利 Terre Effervescenti 系列，提供159種充滿生命力與溫暖質感的色調。適合打造溫馨、輕盈的空間氛圍。</div>
             <div class="color-preview">
               <div class="preview-color" style="background: #F5EED0;" title="PROVENZA 11"></div>
@@ -756,7 +723,7 @@
           <!-- Stucco Italiano -->
           <div class="color-set" onclick="selectColorSet('stucco')">
             <div class="color-set-logo">Stucco Italiano</div>
-            <div class="color-set-tag">優雅中性系</div>
+            <div class="color-set-tag">擁抱古法</div>
             <div class="color-set-desc">義大利灰泥漆系列，精選120種優雅中性的色調。營造簡約、精緻的空間風格，適合現代與古典並存的設計。</div>
             <div class="color-preview">
               <div class="preview-color" style="background: #F0EAE0;" title="21/1 淺米白"></div>
@@ -899,37 +866,8 @@
             </div>
           </div>
 
-          <h3>光線色溫</h3>
-
-          <div style="padding: 20px 0;">
-
-            <div class="slider-group" style="margin-bottom: 0;">
-              <div class="slider-label" style="margin-bottom: 15px;">選擇光源色溫</div>
-
-              <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
-                <button class="color-temp-btn active" id="tempBtn3000" onclick="setColorTemperature(3000)">
-                  <div class="temp-icon" style="background: linear-gradient(180deg, #FFB347 0%, #FF8C00 100%); width: 40px; height: 40px; border-radius: 2px; margin: 0 auto 8px;"></div>
-                  <div style="font-size: 0.9rem; font-weight: 400; color: var(--dark);">3000K</div>
-                  <div style="font-size: 0.75rem; color: var(--accent);">暖光</div>
-                </button>
-
-                <button class="color-temp-btn" id="tempBtn4000" onclick="setColorTemperature(4000)">
-                  <div class="temp-icon" style="background: linear-gradient(180deg, #F5DEB3 0%, #FFD700 100%); width: 40px; height: 40px; border-radius: 2px; margin: 0 auto 8px;"></div>
-                  <div style="font-size: 0.9rem; font-weight: 400; color: var(--dark);">4000K</div>
-                  <div style="font-size: 0.75rem; color: var(--accent);">中性</div>
-                </button>
-
-                <button class="color-temp-btn" id="tempBtn6000" onclick="setColorTemperature(6000)">
-                  <div class="temp-icon" style="background: linear-gradient(180deg, #E0F2FF 0%, #87CEEB 100%); width: 40px; height: 40px; border-radius: 2px; margin: 0 auto 8px;"></div>
-                  <div style="font-size: 0.9rem; font-weight: 400; color: var(--dark);">6000K</div>
-                  <div style="font-size: 0.75rem; color: var(--accent);">冷光</div>
-                </button>
-              </div>
-            </div>
-          </div>
-
           <div class="info-box">
-            <strong>光線色溫：</strong>模擬不同時間和光源下的牆面效果
+            <strong>色彩模擬：</strong>模擬灰泥漆塗抹在牆面後的實際效果
           </div>
         </div>
       </div>
@@ -1263,7 +1201,7 @@
     let selectedColorSet = null;
     let uploadedImage = null;
     let selectedColor = null;
-    let colorTemperature = 3000; // Default to warm light
+    // Lighting: natural light only (no color temperature shift)
     let selectedTone = 'all'; // Default tone filter
 
     // Step Navigation
@@ -1531,19 +1469,6 @@
       document.getElementById('simColorHex').textContent = '';
       // Navigate back to Step 1
       goToStep(1);
-    }
-
-    function setColorTemperature(temp) {
-      colorTemperature = temp;
-
-      // Update button states
-      document.querySelectorAll('.color-temp-btn').forEach(btn => {
-        btn.classList.remove('active');
-      });
-      document.getElementById('tempBtn' + temp).classList.add('active');
-
-      // Update simulation
-      updateSimulation();
     }
 
     function updateSimulation() {
@@ -1867,17 +1792,6 @@
             nr = Math.round(nr + (tR - nr) * ref);
             ng = Math.round(ng + (tG - ng) * ref);
             nb = Math.round(nb + (tB - nb) * ref);
-          }
-
-          // --- Color temperature per-pixel shift ---
-          if (colorTemperature === 3000) {
-            nr = Math.min(255, Math.round(nr * 1.03));
-            ng = Math.round(ng * 0.99);
-            nb = Math.round(nb * 0.94);
-          } else if (colorTemperature === 6000) {
-            nr = Math.round(nr * 0.96);
-            ng = Math.round(ng * 0.99);
-            nb = Math.min(255, Math.round(nb * 1.04));
           }
 
           data[i]     = Math.max(0, Math.min(255, nr));

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>空間色彩模擬器 - Spring Color & Stucco Italiano</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@300;400;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
   <style>
     * {
       margin: 0;
@@ -828,10 +829,10 @@
       <div class="upload-area" onclick="triggerFileInput()">
         <div class="upload-icon">📸</div>
         <div class="upload-text">點擊或拖拽上傳照片</div>
-        <div class="upload-hint">支持 JPG、PNG 格式，建議尺寸 1000x800px 以上</div>
+        <div class="upload-hint">支持 JPG、PNG、HEIC 格式，建議尺寸 1000x800px 以上</div>
       </div>
 
-      <input type="file" id="imageInput" accept="image/*" onchange="handleImageUpload(event)">
+      <input type="file" id="imageInput" accept="image/*,.heic,.HEIC,.heif,.HEIF" onchange="handleImageUpload(event)">
 
       <div id="imagePreviewContainer" style="display: none;">
         <img id="imagePreview" class="preview-image" alt="Preview">
@@ -1438,17 +1439,42 @@
       const file = event.target.files[0];
       if (!file) return;
 
-      const reader = new FileReader();
-      reader.onload = function(e) {
-        uploadedImage = new Image();
-        uploadedImage.onload = function() {
-          document.getElementById('imagePreview').src = uploadedImage.src;
-          document.getElementById('imagePreviewContainer').style.display = 'block';
-          document.getElementById('nextStep2Btn').disabled = false;
+      const isHeic = file.type === 'image/heic' || file.type === 'image/heif'
+                  || /\.(heic|heif)$/i.test(file.name);
+
+      if (isHeic) {
+        // 顯示轉換中提示
+        document.querySelector('.upload-text').textContent = '轉換 HEIC 格式中...';
+        heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 })
+          .then(function(convertedBlob) {
+            document.querySelector('.upload-text').textContent = '點擊或拖拽上傳照片';
+            const url = URL.createObjectURL(convertedBlob);
+            uploadedImage = new Image();
+            uploadedImage.onload = function() {
+              document.getElementById('imagePreview').src = uploadedImage.src;
+              document.getElementById('imagePreviewContainer').style.display = 'block';
+              document.getElementById('nextStep2Btn').disabled = false;
+            };
+            uploadedImage.src = url;
+          })
+          .catch(function(err) {
+            document.querySelector('.upload-text').textContent = '點擊或拖拽上傳照片';
+            alert('HEIC 轉換失敗，請改用 JPG 或 PNG 格式。');
+            console.error('heic2any error:', err);
+          });
+      } else {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          uploadedImage = new Image();
+          uploadedImage.onload = function() {
+            document.getElementById('imagePreview').src = uploadedImage.src;
+            document.getElementById('imagePreviewContainer').style.display = 'block';
+            document.getElementById('nextStep2Btn').disabled = false;
+          };
+          uploadedImage.src = e.target.result;
         };
-        uploadedImage.src = e.target.result;
-      };
-      reader.readAsDataURL(file);
+        reader.readAsDataURL(file);
+      }
     }
 
     // Simulation
@@ -1949,7 +1975,10 @@
     document.addEventListener('drop', (e) => {
       e.preventDefault();
       const file = e.dataTransfer.files[0];
-      if (file && file.type.startsWith('image/')) {
+      if (!file) return;
+      const isHeic = file.type === 'image/heic' || file.type === 'image/heif'
+                  || /\.(heic|heif)$/i.test(file.name);
+      if (file.type.startsWith('image/') || isHeic) {
         document.getElementById('imageInput').files = e.dataTransfer.files;
         handleImageUpload({ target: { files: [file] } });
       }

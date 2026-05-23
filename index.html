@@ -1573,12 +1573,12 @@
       const sampleStep = Math.max(2, Math.floor(Math.sqrt(totalPixels / 40000)));
       const colorBins = new Map();
 
-      for (let y = Math.floor(height * 0.2); y < Math.floor(height * 0.8); y += sampleStep) {
+      for (let y = Math.floor(height * 0.1); y < Math.floor(height * 0.95); y += sampleStep) {
         for (let x = 0; x < width; x += sampleStep) {
           const i = (y * width + x) * 4;
           const r = data[i], g = data[i + 1], b = data[i + 2];
           const bri = r * 0.299 + g * 0.587 + b * 0.114;
-          if (bri > 235 || bri < 25) continue;
+          if (bri > 252 || bri < 20) continue; // 修正：允許亮白牆面參與主色偵測
 
           const qr = (r >> 4) << 4, qg = (g >> 4) << 4, qb = (b >> 4) << 4;
           const key = (qr << 16) | (qg << 8) | qb;
@@ -1642,7 +1642,7 @@
       //   (d) dark-pixel reduction             = very dark is not wall
       // ================================================================
       const mask = new Float32Array(totalPixels);
-      const cThSq = 120 * 120; // 修正：擴大顏色容差
+      const cThSq = 160 * 160; // 修正：進一步擴大顏色容差，容納更多牆面色
 
       for (let y = 0; y < height; y++) {
         const yN = y / height;
@@ -1660,18 +1660,20 @@
           // (b) low variance
           const bx = Math.min((x / BS) | 0, bCols - 1);
           const by = Math.min((y / BS) | 0, bRows - 1);
-          const vp = Math.max(0, 1 - blockVar[by * bCols + bx] * 4.0);
+          const vp = Math.max(0, 1 - blockVar[by * bCols + bx] * 2.5); // 修正：降低方差懲罰，避免平滑牆面誤判
 
-          // (c) ceiling: bright pixels near the top
+          // (c) ceiling: bright pixels near the top — 更保守的天花板排除
           let cf = 1.0;
-          if (bri > 210 && yN < 0.35) cf = Math.max(0.05, yN / 0.25);
-          if (bri > 240) cf *= 0.1;
+          if (bri > 220 && yN < 0.25) cf = Math.max(0.1, yN / 0.20);
+          if (bri > 245) cf *= 0.2;
 
           // (d) very dark pixels
           let df = 1.0;
-          if (bri < 40) df = bri / 40;
+          if (bri < 30) df = bri / 30;
 
-          const pf = Math.min(1, Math.max(0, (yN - 0.12) / 0.12)) * Math.min(1, Math.max(0, (0.82 - yN) / 0.12)); mask[pi] = Math.max(0, Math.min(1, cp * vp * cf * df * pf));
+          // pf: 修正：移除過激邊界裁切，樓梯上下方牆面都需要上色
+          const pf = 1.0;
+          mask[pi] = Math.max(0, Math.min(1, cp * vp * cf * df * pf));
         }
       }
 
@@ -1816,7 +1818,7 @@
             const newS = Math.min(1, Math.max(0, tS * 0.75 + pS * 0.25 + satShift));
 
             const [pr, pg, pb] = hslToRgb(tH, newS, newL);
-                        const blend = Math.min(1.0, wp * 2.5); // 修正：全牆面上色，提升混合強度
+            const blend = Math.min(1.0, wp * 1.8 + 0.15); // 修正：提高基礎遮蓋率，讓牆面顏色更實
             nr = Math.round(r + (pr - r) * blend);
             ng = Math.round(g + (pg - g) * blend);
             nb = Math.round(b + (pb - b) * blend);

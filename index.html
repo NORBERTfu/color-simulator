@@ -1573,12 +1573,17 @@
       const sampleStep = Math.max(2, Math.floor(Math.sqrt(totalPixels / 40000)));
       const colorBins = new Map();
 
-      for (let y = Math.floor(height * 0.1); y < Math.floor(height * 0.95); y += sampleStep) {
-        for (let x = 0; x < width; x += sampleStep) {
+      // 只從畫面中段採樣（避免地板和天花板干擾主牆色）
+      for (let y = Math.floor(height * 0.15); y < Math.floor(height * 0.85); y += sampleStep) {
+        for (let x = Math.floor(width * 0.1); x < Math.floor(width * 0.9); x += sampleStep) {
           const i = (y * width + x) * 4;
           const r = data[i], g = data[i + 1], b = data[i + 2];
           const bri = r * 0.299 + g * 0.587 + b * 0.114;
-          if (bri > 252 || bri < 20) continue; // 修正：允許亮白牆面參與主色偵測
+          if (bri > 252 || bri < 20) continue;
+          // 排除高飽和區域（磚紅、木頭等非牆面元素）
+          const maxC = Math.max(r, g, b), minC = Math.min(r, g, b);
+          const sat = maxC > 0 ? (maxC - minC) / maxC : 0;
+          if (sat > 0.45) continue; // 飽和度高的不是牆
 
           const qr = (r >> 4) << 4, qg = (g >> 4) << 4, qb = (b >> 4) << 4;
           const key = (qr << 16) | (qg << 8) | qb;
@@ -1642,7 +1647,7 @@
       //   (d) dark-pixel reduction             = very dark is not wall
       // ================================================================
       const mask = new Float32Array(totalPixels);
-      const cThSq = 160 * 160; // 修正：進一步擴大顏色容差，容納更多牆面色
+      const cThSq = 90 * 90; // 嚴格顏色容差：只有真正接近牆色才算
 
       for (let y = 0; y < height; y++) {
         const yN = y / height;
@@ -1652,28 +1657,29 @@
           const r = data[i], g = data[i + 1], b = data[i + 2];
           const bri = r * 0.299 + g * 0.587 + b * 0.114;
 
-          // (a) color similarity
+          // (a) 顏色相似度：必須接近主牆色
           const dr = r - wallR, dg = g - wallG, db = b - wallB;
-          let cp = Math.max(0, 1 - (dr * dr + dg * dg + db * db) / cThSq);
-          // cp *= cp; // 修正：移除二次方，提高牆面偵測覆蓋率;
+          const distSq = dr * dr + dg * dg + db * db;
+          let cp = Math.max(0, 1 - distSq / cThSq);
+          cp = cp * cp; // 二次方讓邊緣快速衰減，避免模糊染色
 
-          // (b) low variance
-          const bx = Math.min((x / BS) | 0, bCols - 1);
-          const by = Math.min((y / BS) | 0, bRows - 1);
-          const vp = Math.max(0, 1 - blockVar[by * bCols + bx] * 2.5); // 修正：降低方差懲罰，避免平滑牆面誤判
+          // (b) 區塊方差：高方差（磚牆/欄杆/傢俱）= 不是牆
+          const bxIdx = Math.min((x / BS) | 0, bCols - 1);
+          const byIdx = Math.min((y / BS) | 0, bRows - 1);
+          const vp = Math.max(0, 1 - blockVar[byIdx * bCols + bxIdx] * 3.5);
 
-          // (c) ceiling: bright pixels near the top — 更保守的天花板排除
+          // (c) 天花板排除：頂部亮區
           let cf = 1.0;
-          if (bri > 220 && yN < 0.25) cf = Math.max(0.1, yN / 0.20);
-          if (bri > 245) cf *= 0.2;
+          if (bri > 215 && yN < 0.30) cf = Math.max(0, (yN - 0.05) / 0.20);
+          if (bri > 248) cf = 0; // 純白高光（窗/燈）完全跳過
 
-          // (d) very dark pixels
+          // (d) 極暗像素不是牆
           let df = 1.0;
-          if (bri < 30) df = bri / 30;
+          if (bri < 35) df = bri / 35;
 
-          // pf: 修正：移除過激邊界裁切，樓梯上下方牆面都需要上色
-          const pf = 1.0;
-          mask[pi] = Math.max(0, Math.min(1, cp * vp * cf * df * pf));
+          // 最終 mask：低信心直接歸零，避免半透明染色
+          const raw = cp * vp * cf * df;
+          mask[pi] = raw > 0.15 ? Math.min(1, raw) : 0;
         }
       }
 
@@ -1803,34 +1809,28 @@
 
           let nr = r, ng = g, nb = b;
 
-          // --- Wall recoloring with cloud-like depth ---
-          if (wp > 0.05) {
+          // --- 真實塗漆效果：只替換 hue/sat，完整保留原始光影明暗 ---
+          if (wp > 0) {
             const [pH, pS, pL] = rgbToHsl(r, g, b);
             const cloud = cloudMap[pi];
 
-            // Modulate luminance with cloud pattern for depth effect
-            // Positive cloud = lighter area, negative = deeper/darker area
-            const lumShift = cloud * cloudDepth * wp;
+            // 保留原始亮度（這是「漆」的關鍵：光影不變，只換色）
+            const lumShift = cloud * cloudDepth * wp * 0.5;
             const newL = Math.max(0.03, Math.min(0.97, pL + lumShift));
 
-            // Slight saturation variation — deeper areas slightly richer
+            // 飽和度：用目標色飽和度，但混合原始讓高光/暗部自然
             const satShift = -cloud * satVariation * wp;
-            const newS = Math.min(1, Math.max(0, tS * 0.75 + pS * 0.25 + satShift));
+            const newS = Math.min(1, Math.max(0, tS * 0.85 + pS * 0.15 + satShift));
 
             const [pr, pg, pb] = hslToRgb(tH, newS, newL);
-            const blend = Math.min(1.0, wp * 1.8 + 0.15); // 修正：提高基礎遮蓋率，讓牆面顏色更實
+
+            // blend 嚴格跟 mask 走：wp 夠高才塗滿，不補基礎值
+            const blend = Math.min(1.0, wp * wp * 1.5);
             nr = Math.round(r + (pr - r) * blend);
             ng = Math.round(g + (pg - g) * blend);
             nb = Math.round(b + (pb - b) * blend);
           }
-
-          // --- Ambient reflection on furniture / ceiling (natural light bounce) ---
-          if (wp < 0.6) {
-            const ref = 0.05 * (1 - wp);
-            nr = Math.round(nr + (tR - nr) * ref);
-            ng = Math.round(ng + (tG - ng) * ref);
-            nb = Math.round(nb + (tB - nb) * ref);
-          }
+          // Ambient reflection 完全移除：避免全圖染色濾鏡效果
 
           data[i]     = Math.max(0, Math.min(255, nr));
           data[i + 1] = Math.max(0, Math.min(255, ng));

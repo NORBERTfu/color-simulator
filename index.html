@@ -1677,7 +1677,7 @@
       for (let i=0;i<blockVar.length;i++) blockVar[i]/=maxVar;
 
       // Flood-fill from each click point
-      const TOLERANCE = 38; // color distance tolerance per channel (not squared)
+      const TOLERANCE = 28; // 收緊容差：避免滲入地板/欄杆
       const FLOOD_TOLERANCE_SQ = TOLERANCE * TOLERANCE * 3;
 
       for (const pt of wallClickPoints) {
@@ -1715,7 +1715,9 @@
           const varConf = 1 - vNorm / 0.35;
           const conf = colorConf * varConf;
 
-          if (conf > mask[pi]) mask[pi] = conf;
+          // 硬邊界：信心夠高就塗滿，不做漸層
+          const hardConf = conf > 0.3 ? Math.min(1.0, conf * 1.5) : 0;
+          if (hardConf > mask[pi]) mask[pi] = hardConf;
 
           // Enqueue 4 neighbors
           const neighbors = [];
@@ -1729,26 +1731,7 @@
         }
       }
 
-      // Smooth mask (simple box blur)
-      const blurR = Math.max(3, Math.floor(Math.min(width, height) / 200));
-      const tmp = new Float32Array(totalPixels);
-      const pfx = new Float32Array(Math.max(width, height) + 1);
-      for (let y=0;y<height;y++) {
-        const row=y*width; pfx[0]=0;
-        for (let x=0;x<width;x++) pfx[x+1]=pfx[x]+mask[row+x];
-        for (let x=0;x<width;x++) {
-          const l=Math.max(0,x-blurR), r=Math.min(width-1,x+blurR);
-          tmp[row+x]=(pfx[r+1]-pfx[l])/(r-l+1);
-        }
-      }
-      for (let x=0;x<width;x++) {
-        pfx[0]=0;
-        for (let y=0;y<height;y++) pfx[y+1]=pfx[y]+tmp[y*width+x];
-        for (let y=0;y<height;y++) {
-          const t=Math.max(0,y-blurR), b=Math.min(height-1,y+blurR);
-          mask[y*width+x]=(pfx[b+1]-pfx[t])/(b-t+1);
-        }
-      }
+      // 不做模糊：保持硬邊，塗漆就是硬邊不是暈染
 
       // ================================================================
       // RECOLOR: Replace hue/sat, preserve original luminance (real paint effect)
@@ -1760,7 +1743,7 @@
           const r=orig[i], g=orig[i+1], b=orig[i+2];
           const wp = mask[pi];
 
-          if (wp < 0.01) continue; // Skip non-wall pixels entirely
+          if (wp < 0.05) continue; // Skip non-wall pixels entirely
 
           const [pH, pS, pL] = rgbToHsl(r, g, b);
 
@@ -1770,8 +1753,9 @@
           const newS = tS * 0.9 + pS * 0.1;
           const [pr, pg, pb] = hslToRgb(tH, newS, newL);
 
-          // Blend proportional to mask confidence only
-          const blend = Math.min(1.0, wp * 1.2);
+          // 塗漆效果：mask 夠高就完整上色，不做半透明混合
+          // 只在極邊緣（wp 0.01~0.2）才有少量混合，模擬漆料邊緣
+          const blend = wp > 0.5 ? 1.0 : wp * 2.0;
           data[i]   = Math.max(0, Math.min(255, Math.round(r + (pr-r) * blend)));
           data[i+1] = Math.max(0, Math.min(255, Math.round(g + (pg-g) * blend)));
           data[i+2] = Math.max(0, Math.min(255, Math.round(b + (pb-b) * blend)));

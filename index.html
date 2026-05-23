@@ -850,11 +850,22 @@
     <!-- Step 3: Simulation -->
     <div class="step-content" id="step3">
       <h2>第三步：真實質感模擬</h2>
-      <p>調整色彩參數，查看真實質感效果。系統將自動增加色彩深度、陰影和光線反射。</p>
 
       <div class="simulation-container">
-        <div class="simulation-canvas-wrapper">
-          <canvas id="simulationCanvas"></canvas>
+        <div style="flex:1;min-width:0;">
+          <!-- 點選提示 -->
+          <div id="wallClickHint" style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#F5F0E8;border:1px solid #D9C9A8;border-radius:4px;margin-bottom:10px;font-size:0.88rem;color:#5A4A2A;">
+            <span style="font-size:1.2rem;">👆</span>
+            <span>點擊照片中的<strong>牆面</strong>區域，可多次點選累加。系統會自動擴展至同色區域。</span>
+          </div>
+          <div id="wallSelectedHint" style="display:none;align-items:center;gap:10px;padding:10px 14px;background:#EDF5ED;border:1px solid #A8C9A8;border-radius:4px;margin-bottom:10px;font-size:0.88rem;color:#2A5A2A;">
+            <span style="font-size:1.2rem;">✓</span>
+            <span id="wallClickCount">已選取 1 個牆面區域</span>，繼續點選可增加範圍。
+          </div>
+          <div class="simulation-canvas-wrapper" style="position:relative;">
+            <canvas id="simulationCanvas" style="cursor:crosshair;"></canvas>
+            <div id="clickIndicators" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;"></div>
+          </div>
         </div>
 
         <div class="simulation-controls">
@@ -867,9 +878,13 @@
             </div>
           </div>
 
-          <div class="info-box">
-            <strong>色彩模擬：</strong>模擬灰泥漆塗抹在牆面後的實際效果
+          <div class="info-box" style="margin-bottom:14px;">
+            <strong>使用方式：</strong>點擊牆面位置取樣顏色，系統自動塗色。可點多個區域累加效果。
           </div>
+
+          <button onclick="resetWallSelection()" style="width:100%;padding:9px;background:#fff;border:1px solid var(--border);border-radius:4px;font-size:0.88rem;color:var(--accent);cursor:pointer;margin-bottom:10px;">
+            🔄 重設選區（重新點選）
+          </button>
         </div>
       </div>
 
@@ -1478,6 +1493,9 @@
     }
 
     // Simulation
+    let wallClickPoints = []; // 使用者點選的牆面取樣點
+    let wallMaskGlobal = null; // 累加的牆面 mask
+
     function initializeSimulation() {
       // Sync selected color info to Step 3 display
       if (selectedColor) {
@@ -1485,8 +1503,67 @@
         document.getElementById('simColorName').textContent = selectedColor.name;
         document.getElementById('simColorHex').textContent = selectedColor.hex;
       }
-      // Initialize simulation with default temperature
+
+      // Reset wall selection state
+      wallClickPoints = [];
+      wallMaskGlobal = null;
+
+      // Draw original image on canvas (no color applied yet)
+      const canvas = document.getElementById('simulationCanvas');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      canvas.width = uploadedImage.width;
+      canvas.height = uploadedImage.height;
+      ctx.drawImage(uploadedImage, 0, 0);
+
+      // Show initial hint
+      document.getElementById('wallClickHint').style.display = 'flex';
+      document.getElementById('wallSelectedHint').style.display = 'none';
+      document.getElementById('clickIndicators').innerHTML = '';
+
+      // Set up click handler
+      canvas.onclick = handleCanvasClick;
+    }
+
+    function handleCanvasClick(e) {
+      const canvas = document.getElementById('simulationCanvas');
+      const rect = canvas.getBoundingClientRect();
+      // Convert display coords to canvas pixel coords
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const px = Math.round((e.clientX - rect.left) * scaleX);
+      const py = Math.round((e.clientY - rect.top) * scaleY);
+
+      wallClickPoints.push({ x: px, y: py });
+
+      // Update hint UI
+      document.getElementById('wallClickHint').style.display = 'none';
+      document.getElementById('wallSelectedHint').style.display = 'flex';
+      document.getElementById('wallClickCount').textContent =
+        '已選取 ' + wallClickPoints.length + ' 個牆面取樣點';
+
+      // Show click indicator on overlay
+      const indicators = document.getElementById('clickIndicators');
+      const dot = document.createElement('div');
+      const dispX = (px / canvas.width * 100).toFixed(2);
+      const dispY = (py / canvas.height * 100).toFixed(2);
+      dot.style.cssText = 'position:absolute;width:16px;height:16px;border-radius:50%;background:rgba(255,255,255,0.9);border:2px solid #333;transform:translate(-50%,-50%);left:' + dispX + '%;top:' + dispY + '%;';
+      indicators.appendChild(dot);
+
+      // Re-run simulation with updated points
       updateSimulation();
+    }
+
+    function resetWallSelection() {
+      wallClickPoints = [];
+      wallMaskGlobal = null;
+      document.getElementById('wallClickHint').style.display = 'flex';
+      document.getElementById('wallSelectedHint').style.display = 'none';
+      document.getElementById('clickIndicators').innerHTML = '';
+
+      // Redraw original image
+      const canvas = document.getElementById('simulationCanvas');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(uploadedImage, 0, 0);
     }
 
     function goBackToColorSelection() {
@@ -1507,10 +1584,11 @@
     }
 
     function updateSimulation() {
+      if (!selectedColor || wallClickPoints.length === 0) return;
+
       const canvas = document.getElementById('simulationCanvas');
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-      // Set canvas size and draw original image
       canvas.width = uploadedImage.width;
       canvas.height = uploadedImage.height;
       ctx.drawImage(uploadedImage, 0, 0);
@@ -1519,12 +1597,11 @@
       const height = canvas.height;
       const totalPixels = width * height;
 
-      // Get original image data (keep a backup copy)
       const origImageData = ctx.getImageData(0, 0, width, height);
       const orig = new Uint8ClampedArray(origImageData.data);
       const data = origImageData.data;
 
-      // ===== Helper: RGB to HSL =====
+      // ===== Helper: RGB to HSL / HSL to RGB =====
       function rgbToHsl(r, g, b) {
         r /= 255; g /= 255; b /= 255;
         const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
@@ -1539,423 +1616,171 @@
         return [h, s, l];
       }
 
-      // ===== Helper: HSL to RGB =====
       function hslToRgb(h, s, l) {
         if (s === 0) { const v = Math.round(l * 255); return [v, v, v]; }
         const hue2rgb = (p, q, t) => {
           if (t < 0) t += 1; if (t > 1) t -= 1;
-          if (t < 1 / 6) return p + (q - p) * 6 * t;
-          if (t < 1 / 2) return q;
-          if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+          if (t < 1/6) return p + (q - p) * 6 * t;
+          if (t < 1/2) return q;
+          if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
           return p;
         };
         const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
         const p = 2 * l - q;
         return [
-          Math.round(hue2rgb(p, q, h + 1 / 3) * 255),
+          Math.round(hue2rgb(p, q, h + 1/3) * 255),
           Math.round(hue2rgb(p, q, h) * 255),
-          Math.round(hue2rgb(p, q, h - 1 / 3) * 255)
+          Math.round(hue2rgb(p, q, h - 1/3) * 255)
         ];
       }
 
-      // ===== Parse selected target color =====
+      // ===== Target color =====
       const hex = selectedColor.hex;
-      const tR = parseInt(hex.slice(1, 3), 16);
-      const tG = parseInt(hex.slice(3, 5), 16);
-      const tB = parseInt(hex.slice(5, 7), 16);
+      const tR = parseInt(hex.slice(1,3), 16);
+      const tG = parseInt(hex.slice(3,5), 16);
+      const tB = parseInt(hex.slice(5,7), 16);
       const [tH, tS, tL] = rgbToHsl(tR, tG, tB);
 
       // ================================================================
-      // PHASE 1 — Detect dominant wall color
-      // Sample pixels, quantize into bins, pick the most common color
-      // (skipping very bright = ceiling/windows, very dark = shadows)
+      // MASK: Flood-fill tolerance from each clicked point
+      // For each click point, sample its color, then mark all pixels
+      // within tolerance AND connected (flood-fill) as wall.
+      // Multiple clicks accumulate into the same mask.
       // ================================================================
-      const sampleStep = Math.max(2, Math.floor(Math.sqrt(totalPixels / 40000)));
-      const colorBins = new Map();
+      const mask = new Float32Array(totalPixels);
 
-      // 只從畫面中段採樣（避免地板和天花板干擾主牆色）
-      for (let y = Math.floor(height * 0.15); y < Math.floor(height * 0.85); y += sampleStep) {
-        for (let x = Math.floor(width * 0.1); x < Math.floor(width * 0.9); x += sampleStep) {
-          const i = (y * width + x) * 4;
-          const r = data[i], g = data[i + 1], b = data[i + 2];
-          const bri = r * 0.299 + g * 0.587 + b * 0.114;
-          if (bri > 252 || bri < 20) continue;
-          // 排除高飽和區域（磚紅、木頭等非牆面元素）
-          const maxC = Math.max(r, g, b), minC = Math.min(r, g, b);
-          const sat = maxC > 0 ? (maxC - minC) / maxC : 0;
-          if (sat > 0.45) continue; // 飽和度高的不是牆
-
-          const qr = (r >> 4) << 4, qg = (g >> 4) << 4, qb = (b >> 4) << 4;
-          const key = (qr << 16) | (qg << 8) | qb;
-          const entry = colorBins.get(key);
-          if (entry) { entry.c++; entry.sr += r; entry.sg += g; entry.sb += b; }
-          else { colorBins.set(key, { c: 1, sr: r, sg: g, sb: b }); }
-        }
-      }
-
-      let maxCnt = 0, wallR = 128, wallG = 128, wallB = 128;
-      for (const [, e] of colorBins) {
-        if (e.c > maxCnt) {
-          maxCnt = e.c;
-          wallR = Math.round(e.sr / e.c);
-          wallG = Math.round(e.sg / e.c);
-          wallB = Math.round(e.sb / e.c);
-        }
-      }
-
-      // ================================================================
-      // PHASE 2 — Block-level color variance
-      // Low-variance blocks = flat surfaces (walls / ceiling)
-      // High-variance blocks = textured objects (furniture, decor)
-      // ================================================================
+      // Block variance map (low variance = smooth flat surface = wall)
       const BS = 8;
       const bCols = Math.ceil(width / BS);
       const bRows = Math.ceil(height / BS);
       const blockVar = new Float32Array(bCols * bRows);
-
       for (let by = 0; by < bRows; by++) {
         for (let bx = 0; bx < bCols; bx++) {
-          const x0 = bx * BS, y0 = by * BS;
-          const x1 = Math.min(x0 + BS, width), y1 = Math.min(y0 + BS, height);
-          let sr = 0, sg = 0, sb = 0, cnt = 0;
-          for (let yy = y0; yy < y1; yy++)
-            for (let xx = x0; xx < x1; xx++) {
-              const i = (yy * width + xx) * 4;
-              sr += data[i]; sg += data[i + 1]; sb += data[i + 2]; cnt++;
-            }
-          const ar = sr / cnt, ag = sg / cnt, ab = sb / cnt;
-          let v = 0;
-          for (let yy = y0; yy < y1; yy++)
-            for (let xx = x0; xx < x1; xx++) {
-              const i = (yy * width + xx) * 4;
-              const dr = data[i] - ar, dg = data[i + 1] - ag, db = data[i + 2] - ab;
-              v += dr * dr + dg * dg + db * db;
-            }
-          blockVar[by * bCols + bx] = v / cnt;
+          const x0 = bx*BS, y0 = by*BS;
+          const x1 = Math.min(x0+BS,width), y1 = Math.min(y0+BS,height);
+          let sr=0,sg=0,sb=0,cnt=0;
+          for (let yy=y0;yy<y1;yy++) for (let xx=x0;xx<x1;xx++) {
+            const i=(yy*width+xx)*4; sr+=data[i]; sg+=data[i+1]; sb+=data[i+2]; cnt++;
+          }
+          const ar=sr/cnt, ag=sg/cnt, ab=sb/cnt;
+          let v=0;
+          for (let yy=y0;yy<y1;yy++) for (let xx=x0;xx<x1;xx++) {
+            const i=(yy*width+xx)*4;
+            const dr=data[i]-ar, dg=data[i+1]-ag, db=data[i+2]-ab;
+            v += dr*dr+dg*dg+db*db;
+          }
+          blockVar[by*bCols+bx] = v/cnt;
         }
       }
+      let maxVar=1;
+      for (let i=0;i<blockVar.length;i++) if(blockVar[i]>maxVar) maxVar=blockVar[i];
+      for (let i=0;i<blockVar.length;i++) blockVar[i]/=maxVar;
 
-      let maxVar = 1;
-      for (let i = 0; i < blockVar.length; i++) if (blockVar[i] > maxVar) maxVar = blockVar[i];
-      for (let i = 0; i < blockVar.length; i++) blockVar[i] /= maxVar;
+      // Flood-fill from each click point
+      const TOLERANCE = 38; // color distance tolerance per channel (not squared)
+      const FLOOD_TOLERANCE_SQ = TOLERANCE * TOLERANCE * 3;
 
-      // ================================================================
-      // PHASE 3 — Build per-pixel wall probability mask
-      //   (a) color distance from wall color   = close means wall
-      //   (b) block variance                   = low means wall
-      //   (c) ceiling exclusion                = bright + top = ceiling
-      //   (d) dark-pixel reduction             = very dark is not wall
-      // ================================================================
-      const mask = new Float32Array(totalPixels);
-      const cThSq = 90 * 90; // 嚴格顏色容差：只有真正接近牆色才算
+      for (const pt of wallClickPoints) {
+        if (pt.x < 0 || pt.x >= width || pt.y < 0 || pt.y >= height) continue;
 
-      for (let y = 0; y < height; y++) {
-        const yN = y / height;
-        for (let x = 0; x < width; x++) {
-          const pi = y * width + x;
+        // Sample color at click point
+        const si = (pt.y * width + pt.x) * 4;
+        const seedR = orig[si], seedG = orig[si+1], seedB = orig[si+2];
+
+        // BFS flood fill
+        const visited = new Uint8Array(totalPixels);
+        const queue = [pt.y * width + pt.x];
+        visited[queue[0]] = 1;
+        let head = 0;
+
+        while (head < queue.length) {
+          const pi = queue[head++];
+          const x = pi % width, y = (pi / width) | 0;
           const i = pi * 4;
-          const r = data[i], g = data[i + 1], b = data[i + 2];
-          const bri = r * 0.299 + g * 0.587 + b * 0.114;
+          const r = orig[i], g = orig[i+1], b = orig[i+2];
 
-          // (a) 顏色相似度：必須接近主牆色
-          const dr = r - wallR, dg = g - wallG, db = b - wallB;
-          const distSq = dr * dr + dg * dg + db * db;
-          let cp = Math.max(0, 1 - distSq / cThSq);
-          cp = cp * cp; // 二次方讓邊緣快速衰減，避免模糊染色
+          // Color distance from seed
+          const dr = r - seedR, dg = g - seedG, db = b - seedB;
+          const distSq = dr*dr + dg*dg + db*db;
+          if (distSq > FLOOD_TOLERANCE_SQ) continue;
 
-          // (b) 區塊方差：高方差（磚牆/欄杆/傢俱）= 不是牆
-          const bxIdx = Math.min((x / BS) | 0, bCols - 1);
-          const byIdx = Math.min((y / BS) | 0, bRows - 1);
-          const vp = Math.max(0, 1 - blockVar[byIdx * bCols + bxIdx] * 3.5);
+          // Block variance check: skip high-texture areas (railings, brick, stairs)
+          const bxIdx = Math.min((x/BS)|0, bCols-1);
+          const byIdx = Math.min((y/BS)|0, bRows-1);
+          const vNorm = blockVar[byIdx*bCols+bxIdx];
+          if (vNorm > 0.35) continue; // High variance = not a flat wall surface
 
-          // (c) 天花板排除：頂部亮區
-          let cf = 1.0;
-          if (bri > 215 && yN < 0.30) cf = Math.max(0, (yN - 0.05) / 0.20);
-          if (bri > 248) cf = 0; // 純白高光（窗/燈）完全跳過
+          // Confidence: closer color + lower variance = higher mask value
+          const colorConf = 1 - distSq / FLOOD_TOLERANCE_SQ;
+          const varConf = 1 - vNorm / 0.35;
+          const conf = colorConf * varConf;
 
-          // (d) 極暗像素不是牆
-          let df = 1.0;
-          if (bri < 35) df = bri / 35;
+          if (conf > mask[pi]) mask[pi] = conf;
 
-          // 最終 mask：低信心直接歸零，避免半透明染色
-          const raw = cp * vp * cf * df;
-          mask[pi] = raw > 0.15 ? Math.min(1, raw) : 0;
+          // Enqueue 4 neighbors
+          const neighbors = [];
+          if (x > 0) neighbors.push(pi - 1);
+          if (x < width-1) neighbors.push(pi + 1);
+          if (y > 0) neighbors.push(pi - width);
+          if (y < height-1) neighbors.push(pi + width);
+          for (const n of neighbors) {
+            if (!visited[n]) { visited[n] = 1; queue.push(n); }
+          }
         }
       }
 
-      // ================================================================
-      // PHASE 4 — Smooth the mask (separable box blur via prefix sums)
-      // ================================================================
-      const blurR = Math.max(4, Math.floor(Math.min(width, height) / 150));
+      // Smooth mask (simple box blur)
+      const blurR = Math.max(3, Math.floor(Math.min(width, height) / 200));
       const tmp = new Float32Array(totalPixels);
       const pfx = new Float32Array(Math.max(width, height) + 1);
-
-      // Horizontal pass
-      for (let y = 0; y < height; y++) {
-        const row = y * width;
-        pfx[0] = 0;
-        for (let x = 0; x < width; x++) pfx[x + 1] = pfx[x] + mask[row + x];
-        for (let x = 0; x < width; x++) {
-          const l = Math.max(0, x - blurR), r = Math.min(width - 1, x + blurR);
-          tmp[row + x] = (pfx[r + 1] - pfx[l]) / (r - l + 1);
+      for (let y=0;y<height;y++) {
+        const row=y*width; pfx[0]=0;
+        for (let x=0;x<width;x++) pfx[x+1]=pfx[x]+mask[row+x];
+        for (let x=0;x<width;x++) {
+          const l=Math.max(0,x-blurR), r=Math.min(width-1,x+blurR);
+          tmp[row+x]=(pfx[r+1]-pfx[l])/(r-l+1);
         }
       }
-
-      // Vertical pass
-      for (let x = 0; x < width; x++) {
-        pfx[0] = 0;
-        for (let y = 0; y < height; y++) pfx[y + 1] = pfx[y] + tmp[y * width + x];
-        for (let y = 0; y < height; y++) {
-          const t = Math.max(0, y - blurR), b = Math.min(height - 1, y + blurR);
-          mask[y * width + x] = (pfx[b + 1] - pfx[t]) / (b - t + 1);
+      for (let x=0;x<width;x++) {
+        pfx[0]=0;
+        for (let y=0;y<height;y++) pfx[y+1]=pfx[y]+tmp[y*width+x];
+        for (let y=0;y<height;y++) {
+          const t=Math.max(0,y-blurR), b=Math.min(height-1,y+blurR);
+          mask[y*width+x]=(pfx[b+1]-pfx[t])/(b-t+1);
         }
       }
 
       // ================================================================
-      // PHASE 5 — Generate cloud-like Stucco Italiano texture map
-      //  Multi-octave simplex-style noise creates organic depth variation
-      //  Simulates the layered trowel application of lime plaster
+      // RECOLOR: Replace hue/sat, preserve original luminance (real paint effect)
       // ================================================================
-
-      // Seeded pseudo-random for consistent texture per render
-      const seed = (wallR * 73 + wallG * 179 + wallB * 283) & 0xFFFF;
-      function seededRand(x, y, oct) {
-        let n = (x * 12973 + y * 7559 + oct * 2999 + seed) & 0x7FFFFFFF;
-        n = ((n >> 13) ^ n);
-        n = (n * (n * n * 15731 + 789221) + 1376312589) & 0x7FFFFFFF;
-        return (n / 1073741824.0) - 1.0; // range: -1 to 1
-      }
-
-      // Smooth noise interpolation (value noise with cosine interp)
-      function smoothNoise(x, y, oct) {
-        const ix = Math.floor(x), iy = Math.floor(y);
-        const fx = x - ix, fy = y - iy;
-        // Cosine interpolation for smoother curves
-        const sx = (1 - Math.cos(fx * Math.PI)) * 0.5;
-        const sy = (1 - Math.cos(fy * Math.PI)) * 0.5;
-        const n00 = seededRand(ix, iy, oct);
-        const n10 = seededRand(ix + 1, iy, oct);
-        const n01 = seededRand(ix, iy + 1, oct);
-        const n11 = seededRand(ix + 1, iy + 1, oct);
-        const nx0 = n00 + (n10 - n00) * sx;
-        const nx1 = n01 + (n11 - n01) * sx;
-        return nx0 + (nx1 - nx0) * sy;
-      }
-
-      // Multi-octave fractal noise for cloud-like patterns
-      // Large octaves = broad cloud shapes, small octaves = fine grain
-      function cloudNoise(px, py, baseScale) {
-        let val = 0, amp = 1, totalAmp = 0, freq = baseScale;
-        // 5 octaves: cloud shapes → medium patches → fine detail
-        const octaves = [
-          { f: 1.0,  a: 0.40 },   // Broad cloud shapes
-          { f: 2.2,  a: 0.28 },   // Medium undulations
-          { f: 4.8,  a: 0.18 },   // Trowel-stroke scale
-          { f: 10.5, a: 0.09 },   // Fine surface variation
-          { f: 22.0, a: 0.05 }    // Micro-grain texture
-        ];
-        for (let o = 0; o < octaves.length; o++) {
-          val += smoothNoise(px * freq * octaves[o].f, py * freq * octaves[o].f, o) * octaves[o].a;
-          totalAmp += octaves[o].a;
-        }
-        return val / totalAmp; // Normalized to roughly -1..1
-      }
-
-      // Build cloud texture map (per-pixel luminance variation)
-      const cloudMap = new Float32Array(totalPixels);
-      const baseScale = 3.0 / Math.min(width, height); // Normalize scale to image size
-
-      for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-          const pi = y * width + x;
-          if (mask[pi] < 0.05) { cloudMap[pi] = 0; continue; }
-
-          // Primary cloud pattern
-          let c = cloudNoise(x, y, baseScale);
-
-          // Add directional trowel stroke effect (slightly elongated horizontally)
-          const strokeNoise = smoothNoise(x * baseScale * 6.0, y * baseScale * 2.5, 7);
-          c += strokeNoise * 0.12;
-
-          // Add occasional larger "vein" patterns (characteristic of Stucco Italiano)
-          const veinNoise = smoothNoise(x * baseScale * 1.2 + 50, y * baseScale * 0.8 + 50, 8);
-          const veinStrength = Math.pow(Math.abs(veinNoise), 2.0) * Math.sign(veinNoise);
-          c += veinStrength * 0.15;
-
-          // Clamp and store
-          cloudMap[pi] = Math.max(-1, Math.min(1, c));
-        }
-      }
-
-      // ================================================================
-      // PHASE 6 — Recolor walls with cloud depth + harmonize surroundings
-      //  Wall pixels:  replace hue/sat with target, modulate luminance
-      //                with cloud map for 深淺雲彩感 (cloud-like depth)
-      //  Non-wall:     subtle ambient color reflection for cohesion
-      //  Color temp:   per-pixel warm/cool shift
-      // ================================================================
-      const texture = 0.6;
-      // Cloud depth intensity: how much the luminance varies (0.08 = ±8% luminance)
-      const cloudDepth = 0.10;
-      // Saturation variation from cloud pattern
-      const satVariation = 0.06;
-
-      for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-          const pi = y * width + x;
-          const i = pi * 4;
-          const r = orig[i], g = orig[i + 1], b = orig[i + 2];
+      for (let y=0;y<height;y++) {
+        for (let x=0;x<width;x++) {
+          const pi = y*width+x;
+          const i = pi*4;
+          const r=orig[i], g=orig[i+1], b=orig[i+2];
           const wp = mask[pi];
 
-          let nr = r, ng = g, nb = b;
+          if (wp < 0.01) continue; // Skip non-wall pixels entirely
 
-          // --- 真實塗漆效果：只替換 hue/sat，完整保留原始光影明暗 ---
-          if (wp > 0) {
-            const [pH, pS, pL] = rgbToHsl(r, g, b);
-            const cloud = cloudMap[pi];
+          const [pH, pS, pL] = rgbToHsl(r, g, b);
 
-            // 保留原始亮度（這是「漆」的關鍵：光影不變，只換色）
-            const lumShift = cloud * cloudDepth * wp * 0.5;
-            const newL = Math.max(0.03, Math.min(0.97, pL + lumShift));
+          // Keep original luminance — only replace hue and saturation
+          // This is what real paint does: same shadows/highlights, new color
+          const newL = pL; // Exact original brightness preserved
+          const newS = tS * 0.9 + pS * 0.1;
+          const [pr, pg, pb] = hslToRgb(tH, newS, newL);
 
-            // 飽和度：用目標色飽和度，但混合原始讓高光/暗部自然
-            const satShift = -cloud * satVariation * wp;
-            const newS = Math.min(1, Math.max(0, tS * 0.85 + pS * 0.15 + satShift));
-
-            const [pr, pg, pb] = hslToRgb(tH, newS, newL);
-
-            // blend 嚴格跟 mask 走：wp 夠高才塗滿，不補基礎值
-            const blend = Math.min(1.0, wp * wp * 1.5);
-            nr = Math.round(r + (pr - r) * blend);
-            ng = Math.round(g + (pg - g) * blend);
-            nb = Math.round(b + (pb - b) * blend);
-          }
-          // Ambient reflection 完全移除：避免全圖染色濾鏡效果
-
-          data[i]     = Math.max(0, Math.min(255, nr));
-          data[i + 1] = Math.max(0, Math.min(255, ng));
-          data[i + 2] = Math.max(0, Math.min(255, nb));
+          // Blend proportional to mask confidence only
+          const blend = Math.min(1.0, wp * 1.2);
+          data[i]   = Math.max(0, Math.min(255, Math.round(r + (pr-r) * blend)));
+          data[i+1] = Math.max(0, Math.min(255, Math.round(g + (pg-g) * blend)));
+          data[i+2] = Math.max(0, Math.min(255, Math.round(b + (pb-b) * blend)));
         }
       }
 
       ctx.putImageData(origImageData, 0, 0);
-
-      // ================================================================
-      // PHASE 7 — Lime-plaster surface finish (applied ONLY on wall areas)
-      //  Layer 1: Fine grain noise for tactile surface feel
-      //  Layer 2: Soft radial patches for burnished trowel marks
-      //  Layer 3: Subtle highlight/shadow edges for 3D depth illusion
-      // ================================================================
-      if (texture > 0.1) {
-        // --- Layer 1: Fine grain noise masked to walls ---
-        const texCvs = document.createElement('canvas');
-        texCvs.width = width; texCvs.height = height;
-        const texCtx = texCvs.getContext('2d');
-        const texImg = texCtx.createImageData(width, height);
-        const tPx = texImg.data;
-
-        for (let y = 0; y < height; y++) {
-          for (let x = 0; x < width; x++) {
-            const pi = y * width + x;
-            const ti = pi * 4;
-            const wp = mask[pi];
-            if (wp < 0.1) { tPx[ti + 3] = 0; continue; }
-            const n = (Math.random() - 0.5) * 30;
-            tPx[ti] = 128 + n; tPx[ti + 1] = 128 + n; tPx[ti + 2] = 128 + n;
-            tPx[ti + 3] = Math.round(Math.abs(n) * 1.5 * wp);
-          }
-        }
-        texCtx.putImageData(texImg, 0, 0);
-
-        ctx.globalCompositeOperation = 'overlay';
-        ctx.globalAlpha = texture * 0.08;
-        ctx.drawImage(texCvs, 0, 0);
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = 1;
-
-        // --- Layer 2: Soft radial patches for burnished trowel marks ---
-        const patchCvs = document.createElement('canvas');
-        patchCvs.width = width; patchCvs.height = height;
-        const patchCtx = patchCvs.getContext('2d');
-
-        const numPatches = Math.ceil(totalPixels / 8000);
-        for (let j = 0; j < numPatches; j++) {
-          const px = Math.random() * width;
-          const py = Math.random() * height;
-          const ci = ((py | 0) * width + (px | 0));
-          if (ci < 0 || ci >= totalPixels || mask[ci] < 0.3) continue;
-
-          // Elliptical patches (wider than tall, like trowel strokes)
-          const rw = Math.random() * 120 + 40;
-          const rh = rw * (0.3 + Math.random() * 0.5);
-          const angle = (Math.random() - 0.5) * 0.6; // Slight random angle
-          const bright = Math.random() > 0.45;
-          const alpha = (0.015 + Math.random() * 0.025) * mask[ci];
-
-          patchCtx.save();
-          patchCtx.translate(px, py);
-          patchCtx.rotate(angle);
-          const grad = patchCtx.createRadialGradient(0, 0, 0, 0, 0, rw);
-          if (bright) {
-            grad.addColorStop(0, `rgba(255,255,255,${alpha})`);
-            grad.addColorStop(0.6, `rgba(255,255,255,${alpha * 0.3})`);
-            grad.addColorStop(1, 'rgba(255,255,255,0)');
-          } else {
-            grad.addColorStop(0, `rgba(0,0,0,${alpha})`);
-            grad.addColorStop(0.6, `rgba(0,0,0,${alpha * 0.3})`);
-            grad.addColorStop(1, 'rgba(0,0,0,0)');
-          }
-          patchCtx.fillStyle = grad;
-          patchCtx.scale(1, rh / rw);
-          patchCtx.beginPath();
-          patchCtx.arc(0, 0, rw, 0, Math.PI * 2);
-          patchCtx.fill();
-          patchCtx.restore();
-        }
-
-        ctx.globalCompositeOperation = 'soft-light';
-        ctx.globalAlpha = texture * 0.5;
-        ctx.drawImage(patchCvs, 0, 0);
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = 1;
-
-        // --- Layer 3: Subtle highlight/shadow from cloud depth ---
-        // Use the cloud map to add slight edge highlights, giving 3D illusion
-        const edgeCvs = document.createElement('canvas');
-        edgeCvs.width = width; edgeCvs.height = height;
-        const edgeCtx = edgeCvs.getContext('2d');
-        const edgeImg = edgeCtx.createImageData(width, height);
-        const ePx = edgeImg.data;
-
-        for (let y = 1; y < height - 1; y++) {
-          for (let x = 1; x < width - 1; x++) {
-            const pi = y * width + x;
-            const wp = mask[pi];
-            if (wp < 0.2) continue;
-            // Sobel-like gradient of cloud map → edge highlight
-            const gx = cloudMap[pi + 1] - cloudMap[pi - 1];
-            const gy = cloudMap[pi + width] - cloudMap[pi - width];
-            // Simulate top-left light source
-            const light = (gx * -0.7 + gy * -0.7) * wp;
-            const ti = pi * 4;
-            if (light > 0) {
-              ePx[ti] = 255; ePx[ti + 1] = 255; ePx[ti + 2] = 255;
-              ePx[ti + 3] = Math.round(Math.min(40, light * 120));
-            } else {
-              ePx[ti] = 0; ePx[ti + 1] = 0; ePx[ti + 2] = 0;
-              ePx[ti + 3] = Math.round(Math.min(30, Math.abs(light) * 90));
-            }
-          }
-        }
-        edgeCtx.putImageData(edgeImg, 0, 0);
-
-        ctx.globalCompositeOperation = 'soft-light';
-        ctx.globalAlpha = texture * 0.35;
-        ctx.drawImage(edgeCvs, 0, 0);
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = 1;
-      }
     }
+
 
     function downloadSimulation() {
       const canvas = document.getElementById('simulationCanvas');
